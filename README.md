@@ -2,6 +2,9 @@
 
 Explorador de archivos para Android a través de adb (Python + Tkinter, sin dependencias externas).
 
+## Descarga
+Descarga el ejecutable para Windows desde la [última release](https://github.com/njpd57/ADBFinder/releases/latest) (`ADBFinder.exe`, no requiere Python).
+
 ## Requisitos
 - Python 3.9+
 - `adb` (platform-tools). Se busca en el PATH, en `C:\platform-tools` o en la variable `ADB_PATH`.
