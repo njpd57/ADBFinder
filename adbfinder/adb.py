@@ -240,7 +240,31 @@ class Adb:
         self._run(["-s", serial, "pull", remote, local_dir], timeout=None)
 
     def push(self, serial: str, local: str, remote_dir: str):
-        self._run(["-s", serial, "push", local, remote_dir.rstrip("/") + "/"], timeout=None)
+        try:
+            self._run(["-s", serial, "push", local, remote_dir.rstrip("/") + "/"], timeout=None)
+        except AdbError as e:
+            # Protected locations (e.g. Android/data) reject the directory creation done by
+            # `adb push`, although the shell can create them and single files can be pushed.
+            if "secure_mkdirs" not in str(e) or not os.path.isdir(local):
+                raise
+            self._push_tree(serial, local, remote_dir)
+
+    def _push_tree(self, serial: str, local: str, remote_dir: str):
+        local = os.path.abspath(local)
+        root = posixpath.join(remote_dir, os.path.basename(local))
+        dirs, files = [root], []
+        for cur, subdirs, names in os.walk(local):
+            rel = os.path.relpath(cur, local).replace(os.sep, "/")
+            base = root if rel == "." else posixpath.join(root, rel)
+            dirs.extend(posixpath.join(base, d) for d in subdirs)
+            files.extend((os.path.join(cur, n), base) for n in names)
+        for i in range(0, len(dirs), 50):
+            self.mkdir_many(serial, dirs[i:i + 50])
+        for src, dst in files:
+            self._run(["-s", serial, "push", src, dst.rstrip("/") + "/"], timeout=None)
+
+    def mkdir_many(self, serial: str, paths: list[str]):
+        self._sh_ok(serial, "mkdir -p " + " ".join(shlex.quote(p) for p in paths))
 
 
 def unique_name(name: str, existing: set[str]) -> str:

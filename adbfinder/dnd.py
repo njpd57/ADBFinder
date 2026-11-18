@@ -39,6 +39,18 @@ def enable_file_drop(root, callback: Callable[[list[str], int, int], None]) -> b
     shell32.DragQueryFileW.restype = ctypes.c_uint
     shell32.DragFinish.argtypes = [ctypes.c_void_p]
 
+    pending: list = []
+
+    def poll():
+        while pending:
+            files, x, y = pending.pop(0)
+            try:
+                callback(files, x, y)
+            except Exception:  # noqa: BLE001
+                import traceback
+                traceback.print_exc()
+        root.after(100, poll)
+
     def wndproc(h, msg, wparam, lparam):
         if msg == WM_DROPFILES:
             hdrop = wparam
@@ -52,7 +64,9 @@ def enable_file_drop(root, callback: Callable[[list[str], int, int], None]) -> b
             shell32.DragFinish(hdrop)
             pt = wintypes.POINT()
             user32.GetCursorPos(ctypes.byref(pt))
-            root.after(0, lambda: callback(files, pt.x, pt.y))
+            # Do not touch Tk from inside the WndProc (re-entering Tcl crashes the
+            # interpreter); queue the drop and let a regular Tk timer deliver it.
+            pending.append((files, pt.x, pt.y))
             return 0
         return user32.CallWindowProcW(old_proc, h, msg, wparam, lparam)
 
@@ -68,4 +82,5 @@ def enable_file_drop(root, callback: Callable[[list[str], int, int], None]) -> b
     except Exception:  # noqa: BLE001
         pass
     shell32.DragAcceptFiles(ctypes.c_void_p(hwnd), True)
+    root.after(100, poll)
     return True
