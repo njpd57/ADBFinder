@@ -1,10 +1,12 @@
 import os
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from adbfinder.adb import parse_ls, parse_du, parse_meminfo, unique_name, human_size  # noqa: E402
+from adbfinder.adb import (empty_dirs, human_size, parse_du, parse_ls, parse_meminfo,  # noqa: E402
+                           unique_name)
 
 SAMPLE = """total 24
 drwxrwx--x  2 root sdcard_rw 4096 2024-05-01 10:22 .
@@ -24,6 +26,13 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(e["archivo con espacios.txt"].size, 1234)
         self.assertTrue(e["enlace"].is_link)
         self.assertEqual(e["viejo.txt"].mtime, "May 3 12:01")
+
+    def test_empty_dirs(self):
+        with tempfile.TemporaryDirectory() as root:
+            os.makedirs(os.path.join(root, "a", "empty"))
+            os.makedirs(os.path.join(root, "full"))
+            open(os.path.join(root, "full", "file.txt"), "w").close()
+            self.assertEqual(empty_dirs(root), ["a/empty"])
 
     def test_unique(self):
         self.assertEqual(unique_name("a.txt", {"a.txt"}), "a (1).txt")

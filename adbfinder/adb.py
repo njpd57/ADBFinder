@@ -7,9 +7,11 @@ import re
 import shlex
 import shutil
 import subprocess
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 
+STAGING_ROOT = "/sdcard/.adbfinder_tmp"
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
@@ -250,21 +252,37 @@ class Adb:
             self._push_tree(serial, local, remote_dir)
 
     def _push_tree(self, serial: str, local: str, remote_dir: str):
-        local = os.path.abspath(local)
-        root = posixpath.join(remote_dir, os.path.basename(local))
-        dirs, files = [root], []
-        for cur, subdirs, names in os.walk(local):
-            rel = os.path.relpath(cur, local).replace(os.sep, "/")
-            base = root if rel == "." else posixpath.join(root, rel)
-            dirs.extend(posixpath.join(base, d) for d in subdirs)
-            files.extend((os.path.join(cur, n), base) for n in names)
-        for i in range(0, len(dirs), 50):
-            self.mkdir_many(serial, dirs[i:i + 50])
-        for src, dst in files:
-            self._run(["-s", serial, "push", src, dst.rstrip("/") + "/"], timeout=None)
+        """Push a folder to a protected path through a staging dir on shared storage.
 
-    def mkdir_many(self, serial: str, paths: list[str]):
-        self._sh_ok(serial, "mkdir -p " + " ".join(shlex.quote(p) for p in paths))
+        One `adb push` of the whole tree (fast) plus one shell `mv`/`cp`, instead of
+        one `adb push` process per file.
+        """
+        local = os.path.abspath(local)
+        name = os.path.basename(local)
+        stage = f"{STAGING_ROOT}/{uuid.uuid4().hex[:8]}"
+        dst = posixpath.join(remote_dir, name)
+        try:
+            self._sh_ok(serial, f"mkdir -p {shlex.quote(stage)}")
+            self._run(["-s", serial, "push", local, stage + "/"], timeout=None)
+            src, q_dst = shlex.quote(f"{stage}/{name}"), shlex.quote(dst)
+            # mv is instant on the same partition; cp merges into an existing folder.
+            self._shell(serial,
+                        f"mkdir -p {shlex.quote(remote_dir)} && "
+                        f"if [ -e {q_dst} ]; then cp -r {src}/. {q_dst}/; else mv {src} {q_dst}; fi",
+                        timeout=None)
+            # `adb push` skips empty folders, so create them explicitly.
+            empty = empty_dirs(local)
+            for i in range(0, len(empty), 50):
+                self._sh_ok(serial, "mkdir -p " + " ".join(
+                    shlex.quote(posixpath.join(dst, d)) for d in empty[i:i + 50]))
+        finally:
+            self._shell(serial, f"rm -rf {shlex.quote(stage)}", check=False)
+
+
+def empty_dirs(root: str) -> list[str]:
+    """Return the empty folders under `root` as relative POSIX paths."""
+    return [os.path.relpath(cur, root).replace(os.sep, "/")
+            for cur, subdirs, names in os.walk(root) if not subdirs and not names]
 
 
 def unique_name(name: str, existing: set[str]) -> str:
